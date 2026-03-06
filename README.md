@@ -443,7 +443,7 @@ You are using the wrong credentials. The API requires your **API username and AP
 
 **5. Can I send to international numbers (outside Kuwait)?**
 
-International sending is **disabled by default** on kwtSMS accounts. Contact kwtSMS support to request activation for specific country prefixes. Use `coverage()` to check which countries are currently active on your account. Be aware that activating international coverage increases exposure to automated abuse. Implement rate limiting and CAPTCHA before enabling.
+International sending is **disabled by default** on kwtSMS accounts. Log in to your [kwtSMS account](https://www.kwtsms.com/login/) and add coverage for the country prefixes you need. Use `coverage()` to check which countries are currently active on your account. Be aware that activating international coverage increases exposure to automated abuse. Implement rate limiting and CAPTCHA before enabling.
 
 ## Help & Support
 
