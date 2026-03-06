@@ -65,6 +65,7 @@ pub fn build(b: *std.Build) void {
 
     // Examples
     const examples = [_]struct { name: []const u8, src: []const u8 }{
+        .{ .name = "example-00", .src = "examples/00_raw_api.zig" },
         .{ .name = "example-01", .src = "examples/01_basic_usage.zig" },
         .{ .name = "example-02", .src = "examples/02_otp_flow.zig" },
         .{ .name = "example-03", .src = "examples/03_bulk_sms.zig" },

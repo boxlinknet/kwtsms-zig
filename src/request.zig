@@ -63,14 +63,14 @@ pub fn apiRequest(
         return errors.networkError("Request timed out or failed");
     };
 
-    // Read response body
+    // Read response body (owned by the returned ApiResponse via raw_body)
     const body = req.reader().readAllAlloc(allocator, 1024 * 1024) catch {
         logger.writeLog(log_file, endpoint, json_body, "", false, "Failed to read response body");
         return errors.networkError("Failed to read response body");
     };
-    defer allocator.free(body);
 
-    // Parse JSON response
+    // Note: body is NOT freed here. It is stored in ApiResponse.raw_body and all
+    // parsed string fields (result, code, description, msg_id) point into it.
     return parseResponse(body, log_file, endpoint, json_body);
 }
 
@@ -122,15 +122,22 @@ pub fn parseResponse(
 // Simple JSON field extraction helpers (avoid full parsing overhead for known fields)
 
 fn jsonGetString(json: []const u8, key: []const u8) ?[]const u8 {
-    // Search for "key":"value" pattern
+    // Search for "key":"value" or "key": "value" (handles optional whitespace)
     var search_buf: [128]u8 = undefined;
-    const needle = std.fmt.bufPrint(&search_buf, "\"{s}\":\"", .{key}) catch return null;
+    const needle = std.fmt.bufPrint(&search_buf, "\"{s}\":", .{key}) catch return null;
 
     const idx = std.mem.indexOf(u8, json, needle) orelse return null;
-    const value_start = idx + needle.len;
-    const value_end = std.mem.indexOfPos(u8, json, value_start, "\"") orelse return null;
+    var start = idx + needle.len;
 
-    return json[value_start..value_end];
+    // Skip whitespace after colon
+    while (start < json.len and (json[start] == ' ' or json[start] == '\t')) : (start += 1) {}
+
+    // Expect opening quote
+    if (start >= json.len or json[start] != '"') return null;
+    start += 1;
+
+    const value_end = std.mem.indexOfPos(u8, json, start, "\"") orelse return null;
+    return json[start..value_end];
 }
 
 fn jsonGetInt(json: []const u8, key: []const u8) ?i64 {

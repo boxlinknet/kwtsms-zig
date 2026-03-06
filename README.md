@@ -87,6 +87,7 @@ zig build
 Commands:
 
 ```
+kwtsms setup                                           # interactive setup wizard
 kwtsms verify                                          # test credentials
 kwtsms balance                                         # show credits
 kwtsms senderid                                        # list sender IDs
@@ -101,7 +102,9 @@ Test mode prints a visible warning before sending. Errors print `action` guidanc
 
 ## Setup / Configuration
 
-Create a `.env` file or set these environment variables:
+Run `kwtsms setup` for an interactive wizard that verifies credentials, lets you select a sender ID, and writes a `.env` file.
+
+Or create a `.env` file manually / set these environment variables:
 
 ```ini
 KWTSMS_USERNAME=zig_username
@@ -419,13 +422,14 @@ See the [`examples/`](examples/) directory:
 
 | Example | Description |
 |---------|-------------|
+| [00_raw_api](examples/00_raw_api.zig) | Raw HTTP calls to every API endpoint (no library, copy-paste ready) |
 | [01_basic_usage](examples/01_basic_usage.zig) | Verify credentials, send SMS, check balance |
 | [02_otp_flow](examples/02_otp_flow.zig) | Validate phone, send OTP with best practices |
 | [03_bulk_sms](examples/03_bulk_sms.zig) | Bulk send with >200 number batching |
 | [04_error_handling](examples/04_error_handling.zig) | All error paths, user-facing message mapping |
 | [05_otp_production](examples/05_otp_production.zig) | Production OTP: rate limiting, expiry, secure code generation |
 
-Build and run an example: `zig build example-01`
+Build and run an example: `zig build example-00`
 
 ## Testing
 

@@ -6,6 +6,7 @@ Runnable examples demonstrating how to use the kwtSMS Zig client library.
 
 | # | File | Description |
 |---|------|-------------|
+| 0 | [00_raw_api.zig](00_raw_api.zig) | Raw HTTP calls to every API endpoint (no library, copy-paste ready) |
 | 1 | [01_basic_usage.zig](01_basic_usage.zig) | Connect, verify credentials, send a single SMS |
 | 2 | [02_otp_flow.zig](02_otp_flow.zig) | Generate and send an OTP code |
 | 3 | [03_bulk_sms.zig](03_bulk_sms.zig) | Send to multiple numbers with deduplication |
