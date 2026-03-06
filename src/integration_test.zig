@@ -25,7 +25,7 @@ test "integration: verify with valid credentials" {
 test "integration: verify with wrong credentials" {
     _ = getTestCredentials() orelse return; // skip if no creds at all
     const allocator = std.testing.allocator;
-    var client = kwtsms.KwtSMS.init(allocator, "wrong_user", "wrong_pass", null, true, "");
+    var client = kwtsms.KwtSMS.init(allocator, "zig_wrong_user", "zig_wrong_pass", null, true, "");
     const result = try client.verify();
     try std.testing.expect(!result.ok);
     try std.testing.expect(result.err != null);
