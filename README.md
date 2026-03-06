@@ -6,11 +6,30 @@
 [![Zig](https://img.shields.io/badge/Zig-0.13%2B-orange.svg)](https://ziglang.org/)
 [![GitHub release](https://img.shields.io/github/v/release/boxlinknet/kwtsms-zig)](https://github.com/boxlinknet/kwtsms-zig/releases)
 
-[kwtSMS](https://www.kwtsms.com) is a Kuwaiti SMS gateway trusted by top businesses to deliver messages anywhere in the world, with private Sender ID, free API testing, non-expiring credits, and competitive flat-rate pricing. Secure, simple to integrate, built to last. [Open a free account](https://www.kwtsms.com) in under 1 minute, no paperwork or payment required.
+Zig client for the [kwtSMS API](https://www.kwtsms.com). Send SMS, check balance, validate numbers, list sender IDs, check coverage, get delivery reports.
 
-This is the official Zig client for the kwtSMS API. Zero dependencies, uses only the Zig standard library.
+## About kwtSMS
 
-## Install
+kwtSMS is a Kuwaiti SMS gateway trusted by top businesses to deliver messages anywhere in the world, with private Sender ID, free API testing, non-expiring credits, and competitive flat-rate pricing. Secure, simple to integrate, built to last. Open a free account in under 1 minute, no paperwork or payment required. [Click here to get started](https://www.kwtsms.com/signup/)
+
+## Prerequisites
+
+You need **Zig 0.13+** to compile and run. Zero runtime dependencies.
+
+### Step 1: Check if Zig is installed
+
+```bash
+zig version
+```
+
+If you see a version number, you're ready. If not, install Zig:
+
+- **All platforms (recommended):** Download from [ziglang.org/download](https://ziglang.org/download/)
+- **macOS:** `brew install zig`
+- **Ubuntu/Debian:** Download the tarball from [ziglang.org](https://ziglang.org/download/) and add to PATH
+- **Windows:** Download the zip from [ziglang.org](https://ziglang.org/download/) and add to PATH
+
+### Step 2: Install kwtsms-zig
 
 Add to your `build.zig.zon`:
 
@@ -56,11 +75,9 @@ pub fn main() !void {
 }
 ```
 
-## Setup
+## Setup / Configuration
 
-### Environment Variables
-
-Create a `.env` file in your project root:
+Create a `.env` file or set these environment variables:
 
 ```ini
 KWTSMS_USERNAME=zig_username
@@ -70,9 +87,7 @@ KWTSMS_TEST_MODE=1
 KWTSMS_LOG_FILE=kwtsms.log
 ```
 
-Environment variables take priority over `.env` file values.
-
-### Constructor
+Or pass credentials directly:
 
 ```zig
 var client = kwtsms.KwtSMS.init(
@@ -85,11 +100,23 @@ var client = kwtsms.KwtSMS.init(
 );
 ```
 
-## API Methods
+`KwtSMS.fromEnv()` reads environment variables first, falls back to `.env` file.
 
-### verify()
+## Credential Management
 
-Test credentials and get balance.
+**Never hardcode credentials.** Use one of these approaches:
+
+1. **Environment variables / .env file** (default): `KwtSMS.fromEnv(allocator, null)` loads from env vars, then `.env` file. The file is `.gitignore`d and editable without redeployment.
+
+2. **Constructor injection**: `KwtSMS.init(allocator, username, password, ...)` for custom config systems or remote config.
+
+3. **Secrets manager**: Load from AWS Secrets Manager, HashiCorp Vault, Google Secret Manager, or your own config API, then pass to the constructor.
+
+4. **Admin settings UI** (for web apps): Store credentials in your database with a settings page. Include a "Test Connection" button that calls `verify()`.
+
+## All Methods
+
+### Verify Credentials
 
 ```zig
 const result = try client.verify();
@@ -100,9 +127,30 @@ if (result.ok) {
 }
 ```
 
-### balance()
+### Send SMS
 
-Get current balance. Returns cached value on API failure.
+```zig
+// Single number
+const resp = try client.sendOne("96598765432", "Hello!", null);
+
+// Multiple numbers
+const mobiles = [_][]const u8{ "96598765432", "+96512345678", "0096587654321" };
+const resp = try client.send(&mobiles, "Bulk message", null);
+
+// Custom sender ID
+const resp = try client.sendOne("96598765432", "Hello!", "MY-SENDER");
+
+resp.result;        // "OK" or "ERROR"
+resp.msg_id;        // message ID (save this!)
+resp.numbers;       // count of numbers sent
+resp.points_charged; // credits deducted
+resp.balance_after; // balance after send (save this!)
+resp.code;          // error code (e.g., "ERR003")
+resp.description;   // error description
+resp.action;        // developer-friendly action message
+```
+
+### Check Balance
 
 ```zig
 const bal = try client.balance();
@@ -111,64 +159,32 @@ if (bal) |b| {
 }
 ```
 
-### sendOne()
-
-Send SMS to a single phone number.
-
-```zig
-const resp = try client.sendOne("96598765432", "Your OTP is: 123456", null);
-if (resp.isOk()) {
-    // Save msg-id for status checks / delivery reports
-    std.debug.print("msg-id: {s}\n", .{resp.msg_id.?});
-    std.debug.print("balance: {d:.2}\n", .{resp.balance_after.?});
-}
-```
-
-### send()
-
-Send SMS to multiple phone numbers. Automatically deduplicates normalized numbers.
-
-```zig
-const mobiles = [_][]const u8{ "96598765432", "+96512345678", "0096587654321" };
-const resp = try client.send(&mobiles, "Bulk message", null);
-```
-
-### validate()
-
-Validate phone numbers via the API.
+### Validate Numbers
 
 ```zig
 const phones = [_][]const u8{ "96598765432", "invalid", "+96512345678" };
 const resp = try client.validate(&phones);
 ```
 
-### senderids()
-
-List registered sender IDs.
+### Sender IDs
 
 ```zig
 const resp = try client.senderids();
 ```
 
-### coverage()
-
-List active country prefixes.
+### Coverage
 
 ```zig
 const resp = try client.coverage();
 ```
 
-### status()
-
-Check message delivery status.
+### Message Status
 
 ```zig
 const resp = try client.status("f4c841adee210f31307633ceaebff2ec");
 ```
 
-### dlr()
-
-Get delivery report (international numbers only).
+### Delivery Report (international only)
 
 ```zig
 const resp = try client.dlr("f4c841adee210f31307633ceaebff2ec");
@@ -176,54 +192,41 @@ const resp = try client.dlr("f4c841adee210f31307633ceaebff2ec");
 
 ## Utility Functions
 
-### normalizePhone()
-
-Convert Arabic digits to Latin, strip non-digits, strip leading zeros.
-
 ```zig
+const kwtsms = @import("kwtsms");
+
+// Normalize phone number
 const normalized = try kwtsms.normalizePhone(allocator, "+965 9876-5432");
 defer allocator.free(normalized);
 // normalized = "96598765432"
-```
 
-### validatePhoneInput()
-
-Validate a phone number with detailed error messages.
-
-```zig
+// Validate phone input
 const result = try kwtsms.validatePhoneInput(allocator, "user@example.com");
-if (!result.valid) {
-    std.debug.print("Error: {s}\n", .{result.err.?});
-    // "This looks like an email address, not a phone number"
-}
-```
+// result.valid = false, result.err = "This looks like an email address, not a phone number"
 
-### Test Numerals
-
-Use these for copy-paste testing of Arabic/Persian digit normalization:
-
-| Script | Digits | Example Phone |
-|--------|--------|---------------|
-| Latin | `0123456789` | `96598765432` |
-| Arabic-Indic | `٠١٢٣٤٥٦٧٨٩` | `٩٦٥٩٨٧٦٥٤٣٢` |
-| Extended Arabic-Indic (Persian/Urdu) | `۰۱۲۳۴۵۶۷۸۹` | `۹۶۵۱۲۳۴۵۶۷۸` |
-| Mixed (Arabic-Indic + Latin) | | `٩٦٥98765٤٣٢` |
-
-All variants normalize to Latin digits before sending.
-
-### cleanMessage()
-
-Remove emojis, HTML tags, control characters. Convert Arabic digits to Latin.
-
-```zig
+// Clean message text
 const cleaned = try kwtsms.cleanMessage(allocator, "Hello \xF0\x9F\x98\x80 <b>bold</b>");
 defer allocator.free(cleaned);
 // cleaned = "Hello  bold"
 ```
 
+## Input Sanitization
+
+`cleanMessage()` is called automatically by `send()` before every API call. It prevents the #1 cause of "message sent but not received" support tickets:
+
+| Content | Effect without cleaning | What cleanMessage() does |
+|---------|------------------------|--------------------------|
+| Emojis | Stuck in queue, credits wasted, no error | Stripped |
+| Hidden control characters (BOM, zero-width space, soft hyphen) | Spam filter rejection or queue stuck | Stripped |
+| Arabic/Hindi numerals in body | OTP codes render inconsistently | Converted to Latin digits |
+| HTML tags | ERR027, message rejected | Stripped |
+| Directional marks (LTR, RTL) | May cause display issues | Stripped |
+
+Arabic letters and Arabic text are fully supported and never stripped.
+
 ## Error Handling
 
-Every API response includes `result`, `code`, `description`, and `action` fields:
+Every ERROR response includes an `action` field with a developer-friendly fix:
 
 ```zig
 const resp = try client.sendOne("96598765432", "Test", null);
@@ -234,6 +237,21 @@ if (resp.isError()) {
     }
 }
 ```
+
+### User-facing error mapping
+
+Raw API errors should never be shown to end users. Map them:
+
+| Situation | API error | Show to user |
+|-----------|----------|--------------|
+| Invalid phone number | ERR006, ERR025 | "Please enter a valid phone number in international format (e.g., +965 9876 5432)." |
+| Wrong credentials | ERR003 | "SMS service is temporarily unavailable. Please try again later." (log + alert admin) |
+| No balance | ERR010, ERR011 | "SMS service is temporarily unavailable. Please try again later." (alert admin) |
+| Country not supported | ERR026 | "SMS delivery to this country is not available." |
+| Rate limited | ERR028 | "Please wait a moment before requesting another code." |
+| Message rejected | ERR031, ERR032 | "Your message could not be sent. Please try again with different content." |
+| Queue full | ERR013 | "SMS service is busy. Please try again in a few minutes." (library retries automatically) |
+| Network error | Connection timeout | "Could not connect to SMS service." |
 
 ### Error Codes
 
@@ -253,25 +271,59 @@ if (resp.isError()) {
 
 All 28 error codes are mapped. Use `kwtsms.errors.getAction("ERR003")` to look up any code.
 
-## Credential Management
+## Phone Number Formats
 
-**Never hardcode credentials.** Use one of these approaches:
+All formats are accepted and normalized automatically:
 
-### 1. Environment Variables / .env (recommended for servers)
+| Input | Normalized | Valid? |
+|-------|-----------|--------|
+| `96598765432` | `96598765432` | Yes |
+| `+96598765432` | `96598765432` | Yes |
+| `0096598765432` | `96598765432` | Yes |
+| `965 9876 5432` | `96598765432` | Yes |
+| `965-9876-5432` | `96598765432` | Yes |
+| `(965) 98765432` | `96598765432` | Yes |
+| `٩٦٥٩٨٧٦٥٤٣٢` | `96598765432` | Yes |
+| `۹۶۵۹۸۷۶۵۴۳۲` | `96598765432` | Yes |
+| `+٩٦٥٩٨٧٦٥٤٣٢` | `96598765432` | Yes |
+| `٠٠٩٦٥٩٨٧٦٥٤٣٢` | `96598765432` | Yes |
+| `٩٦٥ ٩٨٧٦ ٥٤٣٢` | `96598765432` | Yes |
+| `٩٦٥-٩٨٧٦-٥٤٣٢` | `96598765432` | Yes |
+| `965٩٨٧٦٥٤٣٢` | `96598765432` | Yes |
+| `123456` (too short) | rejected | No |
+| `user@gmail.com` | rejected | No |
 
-```zig
-var client = try kwtsms.KwtSMS.fromEnv(allocator, null);
-```
+### Test Numerals
 
-### 2. Constructor Injection (for custom config systems)
+Use these for copy-paste testing of Arabic/Persian digit normalization:
 
-```zig
-var client = kwtsms.KwtSMS.init(allocator, username, password, sender, false, null);
-```
+| Script | Digits | Example Phone |
+|--------|--------|---------------|
+| Latin | `0123456789` | `96598765432` |
+| Arabic-Indic | `٠١٢٣٤٥٦٧٨٩` | `٩٦٥٩٨٧٦٥٤٣٢` |
+| Extended Arabic-Indic (Persian/Urdu) | `۰۱۲۳۴۵۶۷۸۹` | `۹۶۵۱۲۳۴۵۶۷۸` |
+| Mixed (Arabic-Indic + Latin) | | `٩٦٥98765٤٣٢` |
 
-### 3. Remote Config / Secrets Manager (recommended for production)
+All variants normalize to Latin digits before sending.
 
-Load from AWS Secrets Manager, HashiCorp Vault, or your own config API, then pass to the constructor.
+## Test Mode
+
+**Test mode** (`KWTSMS_TEST_MODE=1`) sends your message to the kwtSMS queue but does NOT deliver it to the handset. No SMS credits are consumed. Use this during development.
+
+**Live mode** (`KWTSMS_TEST_MODE=0`) delivers the message for real and deducts credits. Always develop in test mode and switch to live only when ready for production.
+
+## Sender ID
+
+A **Sender ID** is the name that appears as the sender on the recipient's phone (e.g., "MY-APP" instead of a random number).
+
+| | Promotional | Transactional |
+|--|-------------|---------------|
+| **Use for** | Bulk SMS, marketing, offers | OTP, alerts, notifications |
+| **Delivery to DND numbers** | Blocked/filtered, credits lost | Bypasses DND (whitelisted) |
+| **Speed** | May have delays | Priority delivery |
+| **Cost** | 10 KD one-time | 15 KD one-time |
+
+`KWT-SMS` is a shared test sender. It causes delivery delays, is blocked on Virgin Kuwait, and should never be used in production. Register your own private Sender ID through your kwtSMS account. For OTP/authentication messages, you need a **Transactional** Sender ID to bypass DND (Do Not Disturb) filtering. Sender ID is **case sensitive**.
 
 ## Best Practices
 
@@ -285,7 +337,7 @@ if (resp.isOk()) {
 }
 ```
 
-### Validate before calling the API
+### Validate locally before calling the API
 
 ```zig
 const validation = try kwtsms.validatePhoneInput(allocator, user_input);
@@ -295,23 +347,26 @@ if (!validation.valid) {
 }
 ```
 
-### Use Transactional Sender ID for OTP
+### OTP requirements
 
-Promotional sender IDs are blocked by DND (Do Not Disturb) on Zain and Ooredoo. OTP messages silently fail and credits are still deducted. Always use a Transactional sender ID for OTP/authentication messages.
+- Always include app/company name: `"Your OTP for APPNAME is: 123456"`
+- Resend timer: minimum 3-4 minutes (KNET standard is 4 minutes)
+- OTP expiry: 3-5 minutes
+- New code on resend: always generate a fresh code, invalidate previous
+- Use Transactional Sender ID for OTP (not Promotional, not KWT-SMS)
+- One number per OTP request: never batch OTP sends
 
-### Server timezone
+### Thread safety
 
-`unix-timestamp` in API responses is **GMT+3 (Asia/Kuwait)**, not UTC. Convert when storing.
+The `KwtSMS` client is thread-safe. Cached balance uses `std.Thread.Mutex` for synchronization. Create one instance and share it across threads.
 
-### Sender ID
+## Timestamps
 
-- `KWT-SMS` is for testing only. Delays, blocked on Virgin Kuwait.
-- Sender ID is case-sensitive: `Kuwait` is not the same as `KUWAIT`.
-- Register a private sender ID before going live.
+`unix-timestamp` values in API responses are in **GMT+3 (Asia/Kuwait)** server time, not UTC. Convert when storing or displaying.
 
 ## Security Checklist
 
-Before deploying to production:
+Before going live:
 
 - [ ] Bot protection enabled (CAPTCHA for web)
 - [ ] Rate limit per phone number (max 3-5/hour)
@@ -323,9 +378,40 @@ Before deploying to production:
 - [ ] Private Sender ID registered (not `KWT-SMS`)
 - [ ] Transactional Sender ID for OTP (not promotional)
 
-## Test Mode
+## What's Handled Automatically
 
-Set `test_mode=true` or `KWTSMS_TEST_MODE=1`. Messages are queued but not delivered. No credits consumed. Delete test messages from the queue at kwtsms.com to release held credits.
+- **Phone normalization**: `+`, `00`, spaces, dashes, dots, parentheses stripped. Arabic-Indic digits converted. Leading zeros removed.
+- **Duplicate phone removal**: If the same number appears multiple times (in different formats), it is sent only once.
+- **Message cleaning**: Emojis removed (codepoint-safe). Hidden control characters (BOM, zero-width spaces, directional marks) removed. HTML tags stripped. Arabic-Indic digits in message body converted to Latin.
+- **Batch splitting**: More than 200 numbers are automatically split into batches of 200 with 0.5s delay between batches.
+- **ERR013 retry**: Queue-full errors are automatically retried up to 3 times with exponential backoff (30s / 60s / 120s).
+- **Error enrichment**: Every API error response includes an `action` field with a developer-friendly fix hint.
+- **Credential masking**: Passwords are always masked as `***` in log files. Never exposed.
+- **Balance caching**: Balance is cached from every `verify()` and `send()` response. `balance()` falls back to the cached value on API failure.
+
+## Examples
+
+See the [`examples/`](examples/) directory:
+
+| Example | Description |
+|---------|-------------|
+| [01_basic_usage](examples/01_basic_usage.zig) | Verify credentials, send SMS, check balance |
+| [02_otp_flow](examples/02_otp_flow.zig) | Validate phone, send OTP with best practices |
+| [03_bulk_sms](examples/03_bulk_sms.zig) | Bulk send with >200 number batching |
+| [04_error_handling](examples/04_error_handling.zig) | All error paths, user-facing message mapping |
+| [05_otp_production](examples/05_otp_production.zig) | Production OTP: rate limiting, expiry, secure code generation |
+
+Build and run an example: `zig build example-01`
+
+## Testing
+
+```bash
+# Unit tests (no credentials needed)
+zig build test
+
+# Integration tests (real API, test mode, no credits consumed)
+ZIG_USERNAME=zig_username ZIG_PASSWORD=zig_password zig build test-integration
+```
 
 ## Logging
 
@@ -337,28 +423,39 @@ JSONL format, one line per API call. Password is always masked as `***`.
 
 Set `log_file` to `""` to disable logging.
 
-## Thread Safety
+## FAQ
 
-The `KwtSMS` client is thread-safe. Cached balance uses `std.Thread.Mutex` for synchronization. Each thread/goroutine can safely share a single client instance.
+**1. My message was sent successfully (result: OK) but the recipient didn't receive it. What happened?**
 
-## Running Tests
+Check the **Sending Queue** at [kwtsms.com](https://www.kwtsms.com/login/). If your message is stuck there, it was accepted by the API but not dispatched. Common causes are emoji in the message, hidden characters from copy-pasting, or spam filter triggers. Delete it from the queue to recover your credits. Also verify that `test` mode is off (`KWTSMS_TEST_MODE=0`). Test messages are queued but never delivered.
 
-```bash
-# Unit tests (no network, no credentials)
-zig build test
+**2. What is the difference between Test mode and Live mode?**
 
-# Integration tests (requires API credentials)
-ZIG_USERNAME=zig_username ZIG_PASSWORD=zig_password zig build test-integration
-```
+**Test mode** (`KWTSMS_TEST_MODE=1`) sends your message to the kwtSMS queue but does NOT deliver it to the handset. No SMS credits are consumed. Use this during development. **Live mode** (`KWTSMS_TEST_MODE=0`) delivers the message for real and deducts credits. Always develop in test mode and switch to live only when ready for production.
 
-## Help and Support
+**3. What is a Sender ID and why should I not use "KWT-SMS" in production?**
 
-- [API Documentation (PDF)](https://www.kwtsms.com/doc/KwtSMS.com_API_Documentation_v41.pdf)
-- [Implementation Best Practices](https://www.kwtsms.com/articles/sms-api-implementation-best-practices.html)
-- [Integration Test Checklist](https://www.kwtsms.com/articles/sms-api-integration-test-checklist.html)
-- [FAQ](https://www.kwtsms.com/faq/)
-- [Contact Support](https://www.kwtsms.com/support.html)
-- [Dashboard](https://www.kwtsms.com/account/)
+A **Sender ID** is the name that appears as the sender on the recipient's phone (e.g., "MY-APP" instead of a random number). `KWT-SMS` is a shared test sender. It causes delivery delays, is blocked on Virgin Kuwait, and should never be used in production. Register your own private Sender ID through your kwtSMS account. For OTP/authentication messages, you need a **Transactional** Sender ID to bypass DND (Do Not Disturb) filtering.
+
+**4. I'm getting ERR003 "Authentication error". What's wrong?**
+
+You are using the wrong credentials. The API requires your **API username and API password**, NOT your account mobile number. Log in to [kwtsms.com](https://www.kwtsms.com/login/), go to Account, and check your API credentials. Also make sure you are using POST (not GET) and `Content-Type: application/json`.
+
+**5. Can I send to international numbers (outside Kuwait)?**
+
+International sending is **disabled by default** on kwtSMS accounts. Contact kwtSMS support to request activation for specific country prefixes. Use `coverage()` to check which countries are currently active on your account. Be aware that activating international coverage increases exposure to automated abuse. Implement rate limiting and CAPTCHA before enabling.
+
+## Help & Support
+
+- **[kwtSMS FAQ](https://www.kwtsms.com/faq/)**: Answers to common questions about credits, sender IDs, OTP, and delivery
+- **[kwtSMS Support](https://www.kwtsms.com/support.html)**: Open a support ticket or browse help articles
+- **[Contact kwtSMS](https://www.kwtsms.com/#contact)**: Reach the kwtSMS team directly for Sender ID registration and account issues
+- **[API Documentation (PDF)](https://www.kwtsms.com/doc/KwtSMS.com_API_Documentation_v41.pdf)**: kwtSMS REST API v4.1 full reference
+- **[Best Practices](https://www.kwtsms.com/articles/sms-api-implementation-best-practices.html)**: SMS API implementation best practices
+- **[Integration Test Checklist](https://www.kwtsms.com/articles/sms-api-integration-test-checklist.html)**: Pre-launch testing checklist
+- **[Sender ID Help](https://www.kwtsms.com/sender-id-help.html)**: How to register, whitelist, and troubleshoot sender IDs
+- **[kwtSMS Dashboard](https://www.kwtsms.com/login/)**: Recharge credits, buy Sender IDs, view message logs, manage coverage
+- **[Other Integrations](https://www.kwtsms.com/integrations.html)**: Plugins and integrations for other platforms and languages
 
 ## License
 
