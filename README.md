@@ -63,8 +63,8 @@ pub fn main() !void {
 Create a `.env` file in your project root:
 
 ```ini
-KWTSMS_USERNAME=your_api_user
-KWTSMS_PASSWORD=your_api_pass
+KWTSMS_USERNAME=zig_username
+KWTSMS_PASSWORD=zig_password
 KWTSMS_SENDER_ID=YOUR-SENDER
 KWTSMS_TEST_MODE=1
 KWTSMS_LOG_FILE=kwtsms.log
@@ -77,8 +77,8 @@ Environment variables take priority over `.env` file values.
 ```zig
 var client = kwtsms.KwtSMS.init(
     allocator,
-    "your_api_user",
-    "your_api_pass",
+    "zig_username",
+    "zig_password",
     "YOUR-SENDER",  // null defaults to "KWT-SMS"
     true,           // test mode
     "kwtsms.log",   // null defaults to "kwtsms.log", "" disables logging
@@ -335,7 +335,7 @@ The `KwtSMS` client is thread-safe. Cached balance uses `std.Thread.Mutex` for s
 zig build test
 
 # Integration tests (requires API credentials)
-ZIG_USERNAME=your_user ZIG_PASSWORD=your_pass zig build test-integration
+ZIG_USERNAME=zig_username ZIG_PASSWORD=zig_password zig build test-integration
 ```
 
 ## Help and Support

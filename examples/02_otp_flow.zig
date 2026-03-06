@@ -7,8 +7,8 @@ pub fn main() !void {
     // Create client with test mode enabled
     var client = kwtsms.KwtSMS.init(
         allocator,
-        "your_api_user",
-        "your_api_pass",
+        "zig_username",
+        "zig_password",
         "YOUR-SENDER", // Use a Transactional sender ID for OTP
         true, // test mode: set to false in production
         null,

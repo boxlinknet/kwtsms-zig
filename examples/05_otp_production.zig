@@ -170,8 +170,8 @@ pub fn main() !void {
     // Create client (use Transactional Sender ID for OTP)
     var client = kwtsms.KwtSMS.init(
         allocator,
-        "your_api_user",
-        "your_api_pass",
+        "zig_username",
+        "zig_password",
         "YOUR-TXN-SENDER", // Transactional sender ID
         true, // set to false in production
         null,

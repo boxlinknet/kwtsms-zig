@@ -16,7 +16,7 @@ zig build
 zig build test
 
 # Run integration tests (requires credentials)
-ZIG_USERNAME=your_user ZIG_PASSWORD=your_pass zig build test-integration
+ZIG_USERNAME=zig_username ZIG_PASSWORD=zig_password zig build test-integration
 ```
 
 ## Project Structure
