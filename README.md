@@ -75,6 +75,30 @@ pub fn main() !void {
 }
 ```
 
+## CLI
+
+Build the CLI binary:
+
+```bash
+zig build
+./zig-out/bin/kwtsms help
+```
+
+Commands:
+
+```
+kwtsms verify                                          # test credentials
+kwtsms balance                                         # show credits
+kwtsms senderid                                        # list sender IDs
+kwtsms coverage                                        # list active prefixes
+kwtsms send <mobile> <message> [--sender ID]           # send SMS
+kwtsms validate <number> [number ...]                  # validate numbers
+kwtsms status <msg-id>                                 # check status
+kwtsms dlr <msg-id>                                    # delivery report
+```
+
+Test mode prints a visible warning before sending. Errors print `action` guidance.
+
 ## Setup / Configuration
 
 Create a `.env` file or set these environment variables:
