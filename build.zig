@@ -20,7 +20,17 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
-    // Unit tests
+    // CLI binary
+    const cli = b.addExecutable(.{
+        .name = "kwtsms",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    cli.root_module.addImport("kwtsms", kwtsms_mod);
+    b.installArtifact(cli);
+
+    // Unit tests (library)
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/kwtsms.zig"),
         .target = target,
@@ -28,8 +38,18 @@ pub fn build(b: *std.Build) void {
     });
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
+    // Unit tests (CLI)
+    const cli_unit_tests = b.addTest(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    cli_unit_tests.root_module.addImport("kwtsms", kwtsms_mod);
+    const run_cli_unit_tests = b.addRunArtifact(cli_unit_tests);
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
+    test_step.dependOn(&run_cli_unit_tests.step);
 
     // Integration tests (separate step, requires credentials)
     const integration_tests = b.addTest(.{
@@ -43,13 +63,23 @@ pub fn build(b: *std.Build) void {
     const integration_step = b.step("test-integration", "Run integration tests (requires ZIG_USERNAME/ZIG_PASSWORD)");
     integration_step.dependOn(&run_integration_tests.step);
 
-    // Example
-    const example = b.addExecutable(.{
-        .name = "kwtsms-example",
-        .root_source_file = b.path("examples/01_basic_usage.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    example.root_module.addImport("kwtsms", kwtsms_mod);
-    b.installArtifact(example);
+    // Examples
+    const examples = [_]struct { name: []const u8, src: []const u8 }{
+        .{ .name = "example-01", .src = "examples/01_basic_usage.zig" },
+        .{ .name = "example-02", .src = "examples/02_otp_flow.zig" },
+        .{ .name = "example-03", .src = "examples/03_bulk_sms.zig" },
+        .{ .name = "example-04", .src = "examples/04_error_handling.zig" },
+        .{ .name = "example-05", .src = "examples/05_otp_production.zig" },
+    };
+
+    for (examples) |ex| {
+        const example = b.addExecutable(.{
+            .name = ex.name,
+            .root_source_file = b.path(ex.src),
+            .target = target,
+            .optimize = optimize,
+        });
+        example.root_module.addImport("kwtsms", kwtsms_mod);
+        b.installArtifact(example);
+    }
 }
