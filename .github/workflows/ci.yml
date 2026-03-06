@@ -16,7 +16,7 @@ jobs:
         zig-version: ['0.13.0']
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Zig
         uses: goto-bus-stop/setup-zig@v2
