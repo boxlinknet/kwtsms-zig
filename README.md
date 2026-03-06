@@ -1,4 +1,4 @@
-# kwtsms-zig
+# kwtSMS Zig Client
 
 [![CI](https://github.com/boxlinknet/kwtsms-zig/actions/workflows/ci.yml/badge.svg)](https://github.com/boxlinknet/kwtsms-zig/actions/workflows/ci.yml)
 [![Release](https://github.com/boxlinknet/kwtsms-zig/actions/workflows/release.yml/badge.svg)](https://github.com/boxlinknet/kwtsms-zig/actions/workflows/release.yml)
@@ -6,9 +6,9 @@
 [![Zig](https://img.shields.io/badge/Zig-0.13%2B-orange.svg)](https://ziglang.org/)
 [![GitHub release](https://img.shields.io/github/v/release/boxlinknet/kwtsms-zig)](https://github.com/boxlinknet/kwtsms-zig/releases)
 
-Official Zig client for the [kwtSMS](https://www.kwtsms.com) SMS gateway API.
+[kwtSMS](https://www.kwtsms.com) is a Kuwaiti SMS gateway trusted by top businesses to deliver messages anywhere in the world, with private Sender ID, free API testing, non-expiring credits, and competitive flat-rate pricing. Secure, simple to integrate, built to last. [Open a free account](https://www.kwtsms.com) in under 1 minute, no paperwork or payment required.
 
-Zero dependencies. Uses only the Zig standard library.
+This is the official Zig client for the kwtSMS API. Zero dependencies, uses only the Zig standard library.
 
 ## Install
 
@@ -198,6 +198,19 @@ if (!result.valid) {
 }
 ```
 
+### Test Numerals
+
+Use these for copy-paste testing of Arabic/Persian digit normalization:
+
+| Script | Digits | Example Phone |
+|--------|--------|---------------|
+| Latin | `0123456789` | `96598765432` |
+| Arabic-Indic | `٠١٢٣٤٥٦٧٨٩` | `٩٦٥٩٨٧٦٥٤٣٢` |
+| Extended Arabic-Indic (Persian/Urdu) | `۰۱۲۳۴۵۶۷۸۹` | `۹۶۵۱۲۳۴۵۶۷۸` |
+| Mixed (Arabic-Indic + Latin) | | `٩٦٥98765٤٣٢` |
+
+All variants normalize to Latin digits before sending.
+
 ### cleanMessage()
 
 Remove emojis, HTML tags, control characters. Convert Arabic digits to Latin.
@@ -343,8 +356,9 @@ ZIG_USERNAME=zig_username ZIG_PASSWORD=zig_password zig build test-integration
 - [API Documentation (PDF)](https://www.kwtsms.com/doc/KwtSMS.com_API_Documentation_v41.pdf)
 - [Implementation Best Practices](https://www.kwtsms.com/articles/sms-api-implementation-best-practices.html)
 - [Integration Test Checklist](https://www.kwtsms.com/articles/sms-api-integration-test-checklist.html)
-- [Support Center](https://www.kwtsms.com/support.html)
-- [WhatsApp Support](https://wa.me/96599220322): +965.9922-0322
+- [FAQ](https://www.kwtsms.com/faq/)
+- [Contact Support](https://www.kwtsms.com/support.html)
+- [Dashboard](https://www.kwtsms.com/account/)
 
 ## License
 

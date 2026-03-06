@@ -107,6 +107,33 @@ test "integration: emoji-only message returns error" {
     try std.testing.expectEqualStrings("ERR009", resp.code.?);
 }
 
+test "integration: send handles Arabic-Indic digit phone number" {
+    const creds = getTestCredentials() orelse return;
+    const allocator = std.testing.allocator;
+    var client = kwtsms.KwtSMS.init(allocator, creds.username, creds.password, null, true, "");
+    // ٩٦٥٩٨٧٦٥٤٣٢ = 96598765432
+    const resp = try client.sendOne("\xD9\xA9\xD9\xA6\xD9\xA5\xD9\xA9\xD9\xA8\xD9\xA7\xD9\xA6\xD9\xA5\xD9\xA4\xD9\xA3\xD9\xA2", "Arabic numeral test", null);
+    try std.testing.expect(resp.result.len > 0);
+}
+
+test "integration: send handles Extended Arabic-Indic (Persian) digit phone number" {
+    const creds = getTestCredentials() orelse return;
+    const allocator = std.testing.allocator;
+    var client = kwtsms.KwtSMS.init(allocator, creds.username, creds.password, null, true, "");
+    // ۹۶۵۱۲۳۴۵۶۷۸ = 96512345678
+    const resp = try client.sendOne("\xDB\xB9\xDB\xB6\xDB\xB5\xDB\xB1\xDB\xB2\xDB\xB3\xDB\xB4\xDB\xB5\xDB\xB6\xDB\xB7\xDB\xB8", "Persian numeral test", null);
+    try std.testing.expect(resp.result.len > 0);
+}
+
+test "integration: send handles mixed Arabic-Indic and Latin digits" {
+    const creds = getTestCredentials() orelse return;
+    const allocator = std.testing.allocator;
+    var client = kwtsms.KwtSMS.init(allocator, creds.username, creds.password, null, true, "");
+    // ٩٦٥98765٤٣٢ = 96598765432 (mixed Arabic-Indic and Latin)
+    const resp = try client.sendOne("\xD9\xA9\xD9\xA6\xD9\xA598765\xD9\xA4\xD9\xA3\xD9\xA2", "Mixed numeral test", null);
+    try std.testing.expect(resp.result.len > 0);
+}
+
 test "integration: duplicate numbers deduplicated" {
     const creds = getTestCredentials() orelse return;
     const allocator = std.testing.allocator;
