@@ -150,31 +150,46 @@ pub const KwtSMS = struct {
         return self.cached_purchased;
     }
 
-    /// Send SMS to one or more phone numbers.
-    /// Automatically validates/normalizes numbers and cleans the message.
-    /// For >200 numbers, auto-splits into batches.
-    pub fn send(self: *KwtSMS, mobiles: []const []const u8, msg: []const u8, sender: ?[]const u8) !ApiResponse {
-        const effective_sender = sender orelse self.sender_id;
+    /// Send a batch of already-validated numbers as comma-separated string (internal).
+    fn sendBatchRaw(self: *KwtSMS, mobile_csv: []const u8, msg: []const u8, sender: []const u8) !ApiResponse {
+        var body_buf: [8192]u8 = undefined;
+        const body = request.buildSendBody(
+            &body_buf,
+            self.username,
+            self.password,
+            sender,
+            mobile_csv,
+            msg,
+            self.test_mode,
+        ) orelse {
+            return errors.networkError("Request body too large");
+        };
 
-        // Clean message
-        const cleaned = try cleanMessage(self.allocator, msg);
-        defer self.allocator.free(cleaned);
+        const resp = try request.apiRequest(self.allocator, "send", body, self.log_file);
 
-        // Check for empty message after cleaning
-        const trimmed_msg = std.mem.trim(u8, cleaned, " \t\r\n");
-        if (trimmed_msg.len == 0) {
-            return makeError("ERR009", "Message is empty after cleaning (original may have contained only emojis or special characters)");
+        // Cache balance from response
+        if (resp.balance_after) |bal| {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.cached_balance = bal;
         }
 
-        // Validate and normalize phone numbers
+        return resp;
+    }
+
+    /// Validate, normalize, and deduplicate phone numbers. Returns owned slices.
+    fn prepareNumbers(self: *KwtSMS, mobiles: []const []const u8) !struct {
+        valid: std.ArrayList([]const u8),
+        seen: std.StringHashMap(void),
+    } {
         var valid_numbers = std.ArrayList([]const u8).init(self.allocator);
-        defer {
+        errdefer {
             for (valid_numbers.items) |n| self.allocator.free(@constCast(n));
             valid_numbers.deinit();
         }
 
         var seen = std.StringHashMap(void).init(self.allocator);
-        defer seen.deinit();
+        errdefer seen.deinit();
 
         for (mobiles) |mobile| {
             const validation = try validatePhoneInput(self.allocator, mobile);
@@ -196,42 +211,202 @@ pub const KwtSMS = struct {
             try valid_numbers.append(validation.normalized);
         }
 
-        if (valid_numbers.items.len == 0) {
-            return makeError("ERR_INVALID_INPUT", "No valid phone numbers provided");
-        }
+        return .{ .valid = valid_numbers, .seen = seen };
+    }
 
-        // Build comma-separated mobile string
+    /// Build comma-separated string from a slice of numbers.
+    fn buildMobileCsv(self: *KwtSMS, numbers: []const []const u8) ![]u8 {
         var mobile_buf = std.ArrayList(u8).init(self.allocator);
-        defer mobile_buf.deinit();
-        for (valid_numbers.items, 0..) |num, idx| {
+        errdefer mobile_buf.deinit();
+        for (numbers, 0..) |num, idx| {
             if (idx > 0) try mobile_buf.append(',');
             try mobile_buf.appendSlice(num);
         }
+        return try mobile_buf.toOwnedSlice();
+    }
 
-        // Build and send request
-        var body_buf: [8192]u8 = undefined;
-        const body = request.buildSendBody(
-            &body_buf,
-            self.username,
-            self.password,
-            effective_sender,
-            mobile_buf.items,
-            trimmed_msg,
-            self.test_mode,
-        ) orelse {
-            return errors.networkError("Request body too large");
-        };
+    /// Send SMS to one or more phone numbers.
+    /// Automatically validates/normalizes numbers and cleans the message.
+    /// For >200 numbers, auto-splits into batches with 1s delay.
+    pub fn send(self: *KwtSMS, mobiles: []const []const u8, msg: []const u8, sender: ?[]const u8) !ApiResponse {
+        const effective_sender = sender orelse self.sender_id;
 
-        const resp = try request.apiRequest(self.allocator, "send", body, self.log_file);
+        // Clean message
+        const cleaned = try cleanMessage(self.allocator, msg);
+        defer self.allocator.free(cleaned);
 
-        // Cache balance from response
-        if (resp.balance_after) |bal| {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-            self.cached_balance = bal;
+        // Check for empty message after cleaning
+        const trimmed_msg = std.mem.trim(u8, cleaned, " \t\r\n");
+        if (trimmed_msg.len == 0) {
+            return makeError("ERR009", "Message is empty after cleaning (original may have contained only emojis or special characters)");
         }
 
-        return resp;
+        // Validate and normalize phone numbers
+        var prepared = try self.prepareNumbers(mobiles);
+        defer {
+            for (prepared.valid.items) |n| self.allocator.free(@constCast(n));
+            prepared.valid.deinit();
+            prepared.seen.deinit();
+        }
+
+        if (prepared.valid.items.len == 0) {
+            return makeError("ERR_INVALID_INPUT", "No valid phone numbers provided");
+        }
+
+        // Single batch (≤200 numbers)
+        if (prepared.valid.items.len <= 200) {
+            const csv = try self.buildMobileCsv(prepared.valid.items);
+            defer self.allocator.free(csv);
+            return self.sendBatchRaw(csv, trimmed_msg, effective_sender);
+        }
+
+        // Bulk: split into batches of 200 with 1s delay
+        var last_resp: ApiResponse = makeError("ERR_INVALID_INPUT", "No batches sent");
+        var total_numbers: i64 = 0;
+        var total_points: i64 = 0;
+        var batch_count: usize = 0;
+
+        var offset: usize = 0;
+        while (offset < prepared.valid.items.len) {
+            const end = @min(offset + 200, prepared.valid.items.len);
+            const batch = prepared.valid.items[offset..end];
+
+            if (batch_count > 0) {
+                std.time.sleep(1 * std.time.ns_per_s);
+            }
+
+            const csv = try self.buildMobileCsv(batch);
+            defer self.allocator.free(csv);
+
+            const resp = try self.sendBatchRaw(csv, trimmed_msg, effective_sender);
+
+            if (resp.isOk()) {
+                if (resp.numbers) |n| total_numbers += n;
+                if (resp.points_charged) |p| total_points += p;
+            }
+
+            last_resp = resp;
+            batch_count += 1;
+
+            if (resp.isError()) break;
+            offset = end;
+        }
+
+        // Return aggregated response
+        last_resp.numbers = total_numbers;
+        last_resp.points_charged = total_points;
+        return last_resp;
+    }
+
+    /// Send SMS to multiple numbers with detailed per-batch results.
+    /// Returns BulkSendResult with individual msg_ids for each batch.
+    /// For >200 numbers, auto-splits into batches of 200 with 1s delay.
+    pub fn sendBulk(self: *KwtSMS, mobiles: []const []const u8, msg: []const u8, sender: ?[]const u8) !BulkSendResult {
+        const effective_sender = sender orelse self.sender_id;
+
+        // Clean message
+        const cleaned = try cleanMessage(self.allocator, msg);
+        defer self.allocator.free(cleaned);
+
+        const trimmed_msg = std.mem.trim(u8, cleaned, " \t\r\n");
+        if (trimmed_msg.len == 0) {
+            return BulkSendResult{
+                .result = "ERROR",
+                .bulk = false,
+                .batches = 0,
+                .numbers = 0,
+                .points_charged = 0,
+                .balance_after = 0,
+                .msg_ids = try self.allocator.alloc([]const u8, 0),
+                .batch_errors = try self.allocator.alloc(ApiResponse, 0),
+                .invalid = try self.allocator.alloc(InvalidEntry, 0),
+            };
+        }
+
+        // Validate and normalize phone numbers
+        var prepared = try self.prepareNumbers(mobiles);
+        defer {
+            for (prepared.valid.items) |n| self.allocator.free(@constCast(n));
+            prepared.valid.deinit();
+            prepared.seen.deinit();
+        }
+
+        if (prepared.valid.items.len == 0) {
+            return BulkSendResult{
+                .result = "ERROR",
+                .bulk = false,
+                .batches = 0,
+                .numbers = 0,
+                .points_charged = 0,
+                .balance_after = 0,
+                .msg_ids = try self.allocator.alloc([]const u8, 0),
+                .batch_errors = try self.allocator.alloc(ApiResponse, 0),
+                .invalid = try self.allocator.alloc(InvalidEntry, 0),
+            };
+        }
+
+        // Split into batches of 200
+        const batch_size: usize = 200;
+        var msg_ids = std.ArrayList([]const u8).init(self.allocator);
+        errdefer {
+            for (msg_ids.items) |id| self.allocator.free(@constCast(id));
+            msg_ids.deinit();
+        }
+        var batch_errors = std.ArrayList(ApiResponse).init(self.allocator);
+        errdefer batch_errors.deinit();
+
+        var total_numbers: usize = 0;
+        var total_points: i64 = 0;
+        var last_balance: f64 = 0;
+        var all_ok = true;
+        var any_ok = false;
+        var batch_count: usize = 0;
+
+        var offset: usize = 0;
+        while (offset < prepared.valid.items.len) {
+            const end = @min(offset + batch_size, prepared.valid.items.len);
+            const batch = prepared.valid.items[offset..end];
+
+            // Delay between batches (1 second)
+            if (batch_count > 0) {
+                std.time.sleep(1 * std.time.ns_per_s);
+            }
+
+            const csv = try self.buildMobileCsv(batch);
+            defer self.allocator.free(csv);
+
+            const resp = try self.sendBatchRaw(csv, trimmed_msg, effective_sender);
+
+            if (resp.isOk()) {
+                any_ok = true;
+                if (resp.msg_id) |id| {
+                    try msg_ids.append(try self.allocator.dupe(u8, id));
+                }
+                if (resp.numbers) |n| total_numbers += @intCast(n);
+                if (resp.points_charged) |p| total_points += p;
+                if (resp.balance_after) |b| last_balance = b;
+            } else {
+                all_ok = false;
+                try batch_errors.append(resp);
+            }
+
+            batch_count += 1;
+            offset = end;
+        }
+
+        const result_str: []const u8 = if (all_ok and any_ok) "OK" else if (any_ok) "PARTIAL" else "ERROR";
+
+        return BulkSendResult{
+            .result = result_str,
+            .bulk = batch_count > 1,
+            .batches = batch_count,
+            .numbers = total_numbers,
+            .points_charged = total_points,
+            .balance_after = last_balance,
+            .msg_ids = try msg_ids.toOwnedSlice(),
+            .batch_errors = try batch_errors.toOwnedSlice(),
+            .invalid = try self.allocator.alloc(InvalidEntry, 0),
+        };
     }
 
     /// Send SMS to a single phone number (convenience wrapper).
