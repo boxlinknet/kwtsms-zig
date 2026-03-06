@@ -35,15 +35,8 @@ pub fn apiRequest(
             .{ .name = "Content-Type", .value = "application/json" },
             .{ .name = "Accept", .value = "application/json" },
         },
-    }) catch |e| {
-        const err_msg = switch (e) {
-            error.ConnectionRefused => "Connection refused",
-            error.ConnectionTimedOut => "Connection timed out",
-            error.ConnectionResetByPeer => "Connection reset by peer",
-            error.TemporaryNameResolutionFailure => "DNS resolution failed",
-            error.TlsInitializationFailed => "TLS initialization failed",
-            else => "Network error",
-        };
+    }) catch {
+        const err_msg = "Network error: could not connect to API";
         logger.writeLog(log_file, endpoint, json_body, "", false, err_msg);
         return errors.networkError(err_msg);
     };
