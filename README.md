@@ -1,9 +1,10 @@
 # kwtsms-zig
 
 [![CI](https://github.com/boxlinknet/kwtsms-zig/actions/workflows/ci.yml/badge.svg)](https://github.com/boxlinknet/kwtsms-zig/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/boxlinknet/kwtsms-zig/actions/workflows/codeql.yml/badge.svg)](https://github.com/boxlinknet/kwtsms-zig/actions/workflows/codeql.yml)
+[![Release](https://github.com/boxlinknet/kwtsms-zig/actions/workflows/release.yml/badge.svg)](https://github.com/boxlinknet/kwtsms-zig/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Zig](https://img.shields.io/badge/Zig-0.13%2B-orange.svg)](https://ziglang.org/)
+[![GitHub release](https://img.shields.io/github/v/release/boxlinknet/kwtsms-zig)](https://github.com/boxlinknet/kwtsms-zig/releases)
 
 Official Zig client for the [kwtSMS](https://www.kwtsms.com) SMS gateway API.
 
