@@ -17,8 +17,8 @@ Runnable examples demonstrating how to use the kwtSMS Zig client library.
 1. Create a `.env` file in the project root:
 
 ```ini
-KWTSMS_USERNAME=your_api_user
-KWTSMS_PASSWORD=your_api_pass
+KWTSMS_USERNAME=zig_username
+KWTSMS_PASSWORD=zig_password
 KWTSMS_SENDER_ID=YOUR-SENDER
 KWTSMS_TEST_MODE=1
 ```
