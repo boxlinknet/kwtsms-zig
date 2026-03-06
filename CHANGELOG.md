@@ -23,6 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive unit tests (70+ test cases)
 - Integration tests with test_mode support
 - 5 runnable examples including production OTP flow
-- CI/CD with GitHub Actions
-- CodeQL security scanning
+- CI/CD with GitHub Actions (build, test, auto-release on tag)
+- Dependabot for GitHub Actions dependency updates
 - Zero external dependencies (Zig stdlib only)
