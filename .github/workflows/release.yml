@@ -13,6 +13,20 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-linux
+            artifact: kwtsms-linux-x86_64
+          - target: aarch64-linux
+            artifact: kwtsms-linux-aarch64
+          - target: x86_64-windows
+            artifact: kwtsms-windows-x86_64.exe
+          - target: aarch64-macos
+            artifact: kwtsms-macos-aarch64
+          - target: x86_64-macos
+            artifact: kwtsms-macos-x86_64
+
     steps:
       - uses: actions/checkout@v6
 
@@ -22,12 +36,37 @@ jobs:
           version: '0.13.0'
 
       - name: Build
-        run: zig build
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
 
       - name: Run tests
+        if: matrix.target == 'x86_64-linux'
         run: zig build test
+
+      - name: Rename artifact
+        run: cp zig-out/bin/kwtsms* ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  publish:
+    name: Publish Release
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          files: artifacts/*
