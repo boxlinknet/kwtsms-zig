@@ -1,0 +1,71 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      custom_version:
+        description: 'Custom version (overrides bump type, e.g. 1.2.3)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Tag & Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get current version
+        id: current
+        run: |
+          VERSION=$(grep -oP '\.version\s*=\s*"\K[^"]+' build.zig.zon)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Current version: $VERSION"
+
+      - name: Calculate next version
+        id: next
+        run: |
+          if [ -n "${{ inputs.custom_version }}" ]; then
+            NEXT="${{ inputs.custom_version }}"
+          else
+            IFS='.' read -r MAJOR MINOR PATCH <<< "${{ steps.current.outputs.version }}"
+            case "${{ inputs.bump }}" in
+              major) NEXT="$((MAJOR + 1)).0.0" ;;
+              minor) NEXT="$MAJOR.$((MINOR + 1)).0" ;;
+              patch) NEXT="$MAJOR.$MINOR.$((PATCH + 1))" ;;
+            esac
+          fi
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT"
+
+      - name: Update build.zig.zon version
+        run: |
+          sed -i 's/\.version = ".*"/\.version = "${{ steps.next.outputs.version }}"/' build.zig.zon
+          cat build.zig.zon
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add build.zig.zon
+          git commit -m "chore: bump version to ${{ steps.next.outputs.version }}"
+          git push
+
+      - name: Create and push tag
+        run: |
+          git tag "v${{ steps.next.outputs.version }}"
+          git push origin "v${{ steps.next.outputs.version }}"
