@@ -198,6 +198,9 @@ pub const KwtSMS = struct {
                 if (validation.normalized.len > 0) {
                     self.allocator.free(@constCast(validation.normalized));
                 }
+                if (validation.err_allocated) {
+                    if (validation.err) |e| self.allocator.free(@constCast(e));
+                }
                 continue; // Skip invalid numbers
             }
 
@@ -431,6 +434,9 @@ pub const KwtSMS = struct {
             } else {
                 if (validation.normalized.len > 0) {
                     self.allocator.free(@constCast(validation.normalized));
+                }
+                if (validation.err_allocated) {
+                    if (validation.err) |e| self.allocator.free(@constCast(e));
                 }
             }
         }
