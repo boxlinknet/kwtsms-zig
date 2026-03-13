@@ -7,6 +7,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.4.0] - 2026-03-13
+
+### Changed
+- Version bump. All security fixes and `ValidateResult` changes from this development cycle are now stable.
+
+---
+
 ## [0.3.0] - 2026-03-13
 
 ### Added
