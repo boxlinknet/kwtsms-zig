@@ -24,15 +24,20 @@ KWTSMS_SENDER_ID=YOUR-SENDER
 KWTSMS_TEST_MODE=1
 ```
 
-2. Build and run an example:
+2. Build and run a specific example:
 
 ```bash
-zig build
-./zig-out/bin/kwtsms-example
+zig build example-01
+./zig-out/bin/example-01
 ```
+
+Replace `01` with the example number you want to run (`00` through `05`).
 
 ## Notes
 
 - All examples use `test_mode=true` by default. Set to `false` for production.
 - `KWT-SMS` is a shared test sender. Register a private sender ID before going live.
 - For OTP, use a **Transactional** sender ID (not Promotional) to bypass DND filters.
+- `example-05` (production OTP) uses `std.crypto.random` directly. Do not substitute a timestamp-seeded PRNG.
+- Call `client.deinit()` after `KwtSMS.fromEnv()` to free .env-loaded strings.
+- `sendBulk()` returns a `BulkSendResult`; call `result.deinit(allocator)` to free all batch data.

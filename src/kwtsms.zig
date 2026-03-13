@@ -23,6 +23,20 @@ pub const InvalidEntry = struct {
     err: []const u8,
 };
 
+/// ValidateResult wraps the API response plus locally-rejected numbers.
+/// Call deinit(allocator) to free the rejected slice and its error strings.
+pub const ValidateResult = struct {
+    response: ?ApiResponse,
+    rejected: []InvalidEntry,
+
+    pub fn deinit(self: ValidateResult, allocator: std.mem.Allocator) void {
+        for (self.rejected) |entry| {
+            allocator.free(@constCast(entry.err));
+        }
+        allocator.free(self.rejected);
+    }
+};
+
 /// SendResult for single batch (<= 200 numbers).
 pub const SendResult = struct {
     response: ApiResponse,
@@ -446,12 +460,20 @@ pub const KwtSMS = struct {
     }
 
     /// Validate phone numbers via the API.
-    pub fn validate(self: *KwtSMS, phones: []const []const u8) !ApiResponse {
-        // Pre-validate locally
+    /// Returns a ValidateResult containing the API response and any locally-rejected numbers.
+    /// Call result.deinit(allocator) when done.
+    pub fn validate(self: *KwtSMS, phones: []const []const u8) !ValidateResult {
         var valid_numbers = std.ArrayList([]const u8).init(self.allocator);
         defer {
             for (valid_numbers.items) |n| self.allocator.free(@constCast(n));
             valid_numbers.deinit();
+        }
+
+        // L3 fix: collect rejected numbers instead of silently discarding them.
+        var rejected = std.ArrayList(InvalidEntry).init(self.allocator);
+        errdefer {
+            for (rejected.items) |entry| self.allocator.free(@constCast(entry.err));
+            rejected.deinit();
         }
 
         for (phones) |p| {
@@ -459,17 +481,28 @@ pub const KwtSMS = struct {
             if (validation.valid) {
                 try valid_numbers.append(validation.normalized);
             } else {
-                if (validation.normalized.len > 0) {
-                    self.allocator.free(@constCast(validation.normalized));
-                }
+                // Dupe the error string so InvalidEntry always owns it.
+                const err_str = if (validation.err) |e| e else "invalid phone number";
+                const owned_err = try self.allocator.dupe(u8, err_str);
+                // Free original if it was heap-allocated
                 if (validation.err_allocated) {
                     if (validation.err) |e| self.allocator.free(@constCast(e));
                 }
+                // normalized may be empty for totally unparseable input; free if allocated
+                if (validation.normalized.len > 0) {
+                    self.allocator.free(@constCast(validation.normalized));
+                }
+                try rejected.append(InvalidEntry{ .input = p, .err = owned_err });
             }
         }
 
+        const rejected_slice = try rejected.toOwnedSlice();
+
         if (valid_numbers.items.len == 0) {
-            return makeError("ERR_INVALID_INPUT", "No valid phone numbers to validate");
+            return ValidateResult{
+                .response = makeError("ERR_INVALID_INPUT", "No valid phone numbers to validate"),
+                .rejected = rejected_slice,
+            };
         }
 
         // Build comma-separated mobile string
@@ -487,10 +520,14 @@ pub const KwtSMS = struct {
             self.password,
             mobile_buf.items,
         ) orelse {
-            return errors.networkError("Request body too large");
+            // Free rejected_slice before returning error
+            for (rejected_slice) |entry| self.allocator.free(@constCast(entry.err));
+            self.allocator.free(rejected_slice);
+            return error.OutOfMemory;
         };
 
-        return try request.apiRequest(self.allocator, "validate", body, self.log_file);
+        const resp = try request.apiRequest(self.allocator, "validate", body, self.log_file);
+        return ValidateResult{ .response = resp, .rejected = rejected_slice };
     }
 
     /// List registered sender IDs.
@@ -635,4 +672,46 @@ test "BulkSendResult.deinit: frees without crash (M4 fix)" {
     };
 
     result.deinit(allocator); // Must free msg_ids[0], msg_ids[1], msg_ids slice, batch_errors, invalid
+}
+
+test "ValidateResult.deinit: frees rejected entries without crash (L3 fix)" {
+    const allocator = std.testing.allocator;
+
+    const rejected = try allocator.alloc(InvalidEntry, 2);
+    rejected[0] = .{ .input = "bad1", .err = try allocator.dupe(u8, "too short") };
+    rejected[1] = .{ .input = "bad2", .err = try allocator.dupe(u8, "unknown country code") };
+
+    const vr = ValidateResult{ .response = null, .rejected = rejected };
+    vr.deinit(allocator);
+}
+
+test "ValidateResult: all-invalid input returns rejected entries" {
+    const allocator = std.testing.allocator;
+    var client = KwtSMS.init(allocator, "user", "pass", null, false, null);
+
+    const phones = [_][]const u8{ "abc", "123" };
+    var result = try client.validate(&phones);
+    defer result.deinit(allocator);
+
+    // All inputs are locally invalid, so rejected must be non-empty
+    try std.testing.expect(result.rejected.len > 0);
+    // Response is an error makeError result (no API call made)
+    try std.testing.expect(result.response != null);
+    try std.testing.expect(result.response.?.isError());
+}
+
+test "ValidateResult: mixed input returns rejected slice for bad numbers" {
+    // page_allocator: apiRequest allocates raw_body which is intentionally never freed (by design).
+    const allocator = std.heap.page_allocator;
+    var client = KwtSMS.init(allocator, "user", "pass", null, false, null);
+
+    // One valid (Kuwait number), one garbage
+    const phones = [_][]const u8{ "96598765432", "notaphone" };
+    var result = try client.validate(&phones);
+    defer result.deinit(allocator);
+
+    // "notaphone" must appear in rejected
+    try std.testing.expect(result.rejected.len == 1);
+    try std.testing.expectEqualStrings("notaphone", result.rejected[0].input);
+    try std.testing.expect(result.rejected[0].err.len > 0);
 }
