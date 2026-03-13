@@ -36,8 +36,8 @@ Add to your `build.zig.zon`:
 ```zig
 .dependencies = .{
     .kwtsms = .{
-        .url = "https://github.com/boxlinknet/kwtsms-zig/archive/refs/tags/v0.1.0.tar.gz",
-        .hash = "...", // Zig prints the expected hash on first build
+        .url = "https://github.com/boxlinknet/kwtsms-zig/archive/refs/tags/v0.3.0.tar.gz",
+        .hash = "...", // run `zig fetch --save` to populate this automatically
     },
 },
 ```
@@ -58,8 +58,11 @@ const kwtsms = @import("kwtsms");
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    // Load credentials from environment variables / .env file
+    // Load credentials from environment variables / .env file.
+    // Call client.deinit() when done if you use fromEnv() — it frees heap-owned strings.
+    // When using KwtSMS.init() with string literals, deinit() is not needed.
     var client = try kwtsms.KwtSMS.fromEnv(allocator, null);
+    defer client.deinit();
 
     // Verify credentials
     const verify_result = try client.verify();
@@ -154,13 +157,39 @@ resp.description;   // error description
 resp.action;        // developer-friendly action message
 ```
 
+### Bulk Send (detailed per-batch results)
+
+Use `sendBulk()` instead of `send()` when you need individual `msg_id` per batch or want to distinguish which batches succeeded or failed:
+
+```zig
+const mobiles = [_][]const u8{ "96598765432", "+96512345678" /* ... */ };
+const result = try client.sendBulk(&mobiles, "Hello!", null);
+defer result.deinit(client.allocator); // always call deinit to free slices
+
+std.debug.print("Batches: {d}, Total: {d}, Charged: {d}\n", .{
+    result.batches, result.numbers, result.points_charged,
+});
+for (result.msg_ids) |id| {
+    std.debug.print("msg-id: {s}\n", .{id});
+}
+for (result.batch_errors) |err_resp| {
+    std.debug.print("Batch error: {s}\n", .{err_resp.code.?});
+}
+// result.result is "OK", "PARTIAL" (some batches failed), or "ERROR"
+```
+
 ### Check Balance
 
 ```zig
+// API call: fetches live balance and caches it
 const bal = try client.balance();
 if (bal) |b| {
     std.debug.print("Balance: {d:.2}\n", .{b});
 }
+
+// No API call: returns last cached value (from verify/send/balance responses)
+const cached = client.cachedBalance();
+const purchased = client.cachedPurchased();
 ```
 
 ### Validate Numbers
@@ -387,8 +416,7 @@ Before going live:
 - **Phone normalization**: `+`, `00`, spaces, dashes, dots, parentheses stripped. Arabic-Indic digits converted. Leading zeros removed.
 - **Duplicate phone removal**: If the same number appears multiple times (in different formats), it is sent only once.
 - **Message cleaning**: Emojis removed (codepoint-safe). Hidden control characters (BOM, zero-width spaces, directional marks) removed. HTML tags stripped. Arabic-Indic digits in message body converted to Latin.
-- **Batch splitting**: More than 200 numbers are automatically split into batches of 200 with 0.5s delay between batches.
-- **ERR013 retry**: Queue-full errors are automatically retried up to 3 times with exponential backoff (30s / 60s / 120s).
+- **Batch splitting**: More than 200 numbers are automatically split into batches of 200 with 1s delay between batches.
 - **Error enrichment**: Every API error response includes an `action` field with a developer-friendly fix hint.
 - **Credential masking**: Passwords are always masked as `***` in log files. Never exposed.
 - **Balance caching**: Balance is cached from every `verify()` and `send()` response. `balance()` falls back to the cached value on API failure.
