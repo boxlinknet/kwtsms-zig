@@ -14,12 +14,12 @@ pub fn main() !void {
         null,
     );
 
-    // Generate OTP (use crypto random in production)
+    // Generate OTP using the OS CSPRNG directly.
+    // L1 fix: do not use a PRNG seeded from a timestamp — predictable within same second.
+    // std.crypto.random draws from the OS entropy source on every call.
     var otp_buf: [6]u8 = undefined;
-    var prng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
-    const random = prng.random();
     for (&otp_buf) |*c| {
-        c.* = '0' + random.intRangeAtMost(u8, 0, 9);
+        c.* = '0' + std.crypto.random.intRangeAtMost(u8, 0, 9);
     }
 
     // Send OTP

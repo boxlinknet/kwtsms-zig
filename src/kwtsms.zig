@@ -40,16 +40,16 @@ pub const BulkSendResult = struct {
     msg_ids: [][]const u8,
     batch_errors: []ApiResponse,
     invalid: []InvalidEntry,
-};
 
-/// ValidateResult from the validate endpoint.
-pub const ValidateResult = struct {
-    ok: [][]const u8,
-    er: [][]const u8,
-    nr: [][]const u8,
-    rejected: []InvalidEntry,
-    err: ?[]const u8,
-    raw_body: ?[]const u8,
+    /// M4 fix: free all heap-allocated fields.
+    /// msg_ids entries are duped; batch_errors and invalid slices are allocated.
+    /// raw_body pointers inside batch_errors are intentionally NOT freed (owned by ApiResponse).
+    pub fn deinit(self: BulkSendResult, allocator: std.mem.Allocator) void {
+        for (self.msg_ids) |id| allocator.free(@constCast(id));
+        allocator.free(self.msg_ids);
+        allocator.free(self.batch_errors);
+        allocator.free(self.invalid);
+    }
 };
 
 /// kwtSMS API client.
@@ -58,12 +58,22 @@ pub const KwtSMS = struct {
     allocator: std.mem.Allocator,
     username: []const u8,
     password: []const u8,
+    // C1 fix: holds ownership of strings loaded from a .env file (via fromEnv).
+    // Null when using init() with caller-owned string literals.
+    _env_config: ?env.EnvConfig = null,
     sender_id: []const u8,
     test_mode: bool,
     log_file: ?[]const u8,
     cached_balance: ?f64,
     cached_purchased: ?f64,
     mutex: std.Thread.Mutex,
+
+    /// Free resources when the client was created via fromEnv().
+    /// Not needed when using init() with string literals.
+    pub fn deinit(self: *KwtSMS) void {
+        if (self._env_config) |cfg| cfg.deinit(self.allocator);
+        self._env_config = null;
+    }
 
     /// Create a new KwtSMS client.
     pub fn init(
@@ -88,6 +98,9 @@ pub const KwtSMS = struct {
     }
 
     /// Create a KwtSMS client from environment variables / .env file.
+    /// C1 fix: config strings that came from the .env file are heap-duped by loadConfig.
+    /// We store the EnvConfig in _env_config so they stay alive as long as the client does.
+    /// Call client.deinit() when done to free them.
     pub fn fromEnv(allocator: std.mem.Allocator, env_file: ?[]const u8) !KwtSMS {
         const config = try env.loadConfig(allocator, env_file orelse ".env");
         return KwtSMS{
@@ -100,6 +113,7 @@ pub const KwtSMS = struct {
             .cached_balance = null,
             .cached_purchased = null,
             .mutex = .{},
+            ._env_config = config, // keeps duped strings alive
         };
     }
 
@@ -204,14 +218,27 @@ pub const KwtSMS = struct {
                 continue; // Skip invalid numbers
             }
 
+            // Free allocated format errors on valid path too (err is null for valid numbers,
+            // but guard anyway)
+            if (validation.err_allocated) {
+                if (validation.err) |e| self.allocator.free(@constCast(e));
+            }
+
             // Deduplicate
             if (seen.contains(validation.normalized)) {
                 self.allocator.free(@constCast(validation.normalized));
                 continue;
             }
 
-            try seen.put(validation.normalized, {});
+            // M2 fix: append before put so that if seen.put fails (OOM), we can undo
+            // the append and free the normalized string cleanly. This closes the window
+            // where normalized would be in seen but not in valid_numbers, leaking on error.
             try valid_numbers.append(validation.normalized);
+            seen.put(validation.normalized, {}) catch |err| {
+                _ = valid_numbers.pop();
+                self.allocator.free(@constCast(validation.normalized));
+                return err;
+            };
         }
 
         return .{ .valid = valid_numbers, .seen = seen };
@@ -486,7 +513,9 @@ pub const KwtSMS = struct {
 
     /// Check message status.
     pub fn status(self: *KwtSMS, msg_id: []const u8) !ApiResponse {
-        var buf: [512]u8 = undefined;
+        // M3 fix: 1024 bytes comfortably fits username(64) + password(64) + msg_id(up to ~400)
+        // plus JSON framing. The old 512-byte buffer would overflow with long msg_ids.
+        var buf: [1024]u8 = undefined;
         const body = request.buildMsgIdBody(&buf, self.username, self.password, msg_id) orelse {
             return errors.networkError("Failed to build request");
         };
@@ -495,7 +524,8 @@ pub const KwtSMS = struct {
 
     /// Get delivery report (international numbers only).
     pub fn dlr(self: *KwtSMS, msg_id: []const u8) !ApiResponse {
-        var buf: [512]u8 = undefined;
+        // M3 fix: same 1024-byte buffer as status().
+        var buf: [1024]u8 = undefined;
         const body = request.buildMsgIdBody(&buf, self.username, self.password, msg_id) orelse {
             return errors.networkError("Failed to build request");
         };
@@ -560,4 +590,49 @@ test "normalizePhone integration: strips and converts" {
     const result = try normalizePhone(allocator, "+965 9876-5432");
     defer allocator.free(result);
     try std.testing.expectEqualStrings("96598765432", result);
+}
+
+test "KwtSMS.fromEnv: strings from .env file are valid after return (C1 fix)" {
+    const allocator = std.testing.allocator;
+
+    const tmp_path = "/tmp/kwtsms_test_fromenv_uaf";
+    {
+        const f = try std.fs.cwd().createFile(tmp_path, .{});
+        defer f.close();
+        try f.writeAll("KWTSMS_USERNAME=envuser\nKWTSMS_PASSWORD=envpass\nKWTSMS_SENDER_ID=ENVSENDER\n");
+    }
+    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+
+    var client = try KwtSMS.fromEnv(allocator, tmp_path);
+    defer client.deinit();
+
+    // These must be valid strings (not dangling pointers into freed env_map memory)
+    try std.testing.expectEqualStrings("envuser", client.username);
+    try std.testing.expectEqualStrings("envpass", client.password);
+    try std.testing.expectEqualStrings("ENVSENDER", client.sender_id);
+}
+
+test "BulkSendResult.deinit: frees without crash (M4 fix)" {
+    const allocator = std.testing.allocator;
+
+    // Allocate a minimal BulkSendResult and verify deinit frees correctly
+    const msg_ids = try allocator.alloc([]const u8, 2);
+    msg_ids[0] = try allocator.dupe(u8, "msgid1");
+    msg_ids[1] = try allocator.dupe(u8, "msgid2");
+    const batch_errors = try allocator.alloc(ApiResponse, 0);
+    const invalid = try allocator.alloc(InvalidEntry, 0);
+
+    const result = BulkSendResult{
+        .result = "OK",
+        .bulk = false,
+        .batches = 1,
+        .numbers = 2,
+        .points_charged = 2,
+        .balance_after = 100.0,
+        .msg_ids = msg_ids,
+        .batch_errors = batch_errors,
+        .invalid = invalid,
+    };
+
+    result.deinit(allocator); // Must free msg_ids[0], msg_ids[1], msg_ids slice, batch_errors, invalid
 }

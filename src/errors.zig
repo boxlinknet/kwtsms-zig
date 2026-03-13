@@ -1,6 +1,7 @@
 const std = @import("std");
 
-/// All 33 kwtSMS API error codes mapped to developer-friendly action messages.
+/// 28 documented kwtSMS API error codes mapped to developer-friendly action messages.
+/// ERR014-ERR018 are gaps in the official API documentation and are intentionally omitted.
 pub const ApiErrorEntry = struct {
     code: []const u8,
     action: []const u8,
@@ -150,7 +151,7 @@ test "networkError creates network error" {
     try std.testing.expect(std.mem.eql(u8, resp.code.?, "NETWORK"));
 }
 
-test "all 28 error codes have actions" {
+test "all documented error codes have actions" {
     for (api_errors) |entry| {
         try std.testing.expect(entry.action.len > 0);
         try std.testing.expect(entry.code.len > 0);

@@ -7,6 +7,22 @@ pub const EnvConfig = struct {
     sender_id: ?[]const u8 = null,
     test_mode: bool = false,
     log_file: ?[]const u8 = null,
+    // Tracks which string fields were heap-duped from the .env file
+    // and must be freed by the owner. Fields from process env are stable
+    // pointers and must NOT be freed.
+    _owned_username: bool = false,
+    _owned_password: bool = false,
+    _owned_sender_id: bool = false,
+    _owned_log_file: bool = false,
+
+    /// Free heap-allocated strings loaded from the .env file.
+    /// Do NOT call on configs built from process-env-only values.
+    pub fn deinit(self: EnvConfig, allocator: std.mem.Allocator) void {
+        if (self._owned_username) if (self.username) |s| allocator.free(@constCast(s));
+        if (self._owned_password) if (self.password) |s| allocator.free(@constCast(s));
+        if (self._owned_sender_id) if (self.sender_id) |s| allocator.free(@constCast(s));
+        if (self._owned_log_file) if (self.log_file) |s| allocator.free(@constCast(s));
+    }
 };
 
 /// Load a .env file and return a map of key-value pairs.
@@ -68,8 +84,12 @@ pub fn loadEnvFile(allocator: std.mem.Allocator, path: []const u8) !std.StringHa
 }
 
 /// Load kwtSMS configuration from environment variables, falling back to .env file.
+/// Process environment variables take priority. Values loaded from the .env file
+/// are heap-duped; caller must call EnvConfig.deinit(allocator) when done.
 pub fn loadConfig(allocator: std.mem.Allocator, env_file: []const u8) !EnvConfig {
     var config = EnvConfig{};
+    // Free any duped strings if we error out mid-way
+    errdefer config.deinit(allocator);
 
     // Load .env file as fallback
     var env_map = try loadEnvFile(allocator, env_file);
@@ -82,11 +102,35 @@ pub fn loadConfig(allocator: std.mem.Allocator, env_file: []const u8) !EnvConfig
         env_map.deinit();
     }
 
-    // Environment variables take priority over .env file
-    config.username = std.posix.getenv("KWTSMS_USERNAME") orelse env_map.get("KWTSMS_USERNAME");
-    config.password = std.posix.getenv("KWTSMS_PASSWORD") orelse env_map.get("KWTSMS_PASSWORD");
-    config.sender_id = std.posix.getenv("KWTSMS_SENDER_ID") orelse env_map.get("KWTSMS_SENDER_ID");
-    config.log_file = std.posix.getenv("KWTSMS_LOG_FILE") orelse env_map.get("KWTSMS_LOG_FILE");
+    // For each field: process env takes priority (stable pointer, no free needed).
+    // Fallback to .env file: dupe the value so it survives after the map is freed.
+    if (std.posix.getenv("KWTSMS_USERNAME")) |v| {
+        config.username = v;
+    } else if (env_map.get("KWTSMS_USERNAME")) |v| {
+        config.username = try allocator.dupe(u8, v);
+        config._owned_username = true;
+    }
+
+    if (std.posix.getenv("KWTSMS_PASSWORD")) |v| {
+        config.password = v;
+    } else if (env_map.get("KWTSMS_PASSWORD")) |v| {
+        config.password = try allocator.dupe(u8, v);
+        config._owned_password = true;
+    }
+
+    if (std.posix.getenv("KWTSMS_SENDER_ID")) |v| {
+        config.sender_id = v;
+    } else if (env_map.get("KWTSMS_SENDER_ID")) |v| {
+        config.sender_id = try allocator.dupe(u8, v);
+        config._owned_sender_id = true;
+    }
+
+    if (std.posix.getenv("KWTSMS_LOG_FILE")) |v| {
+        config.log_file = v;
+    } else if (env_map.get("KWTSMS_LOG_FILE")) |v| {
+        config.log_file = try allocator.dupe(u8, v);
+        config._owned_log_file = true;
+    }
 
     const test_mode_str = std.posix.getenv("KWTSMS_TEST_MODE") orelse env_map.get("KWTSMS_TEST_MODE") orelse "0";
     config.test_mode = std.mem.eql(u8, test_mode_str, "1") or std.mem.eql(u8, test_mode_str, "true");
@@ -224,4 +268,52 @@ test "loadEnvFile: values with equals signs" {
     }
 
     try std.testing.expectEqualStrings("abc=def=ghi", map.get("PASS").?);
+}
+
+test "loadConfig: values from .env file are owned and survive after return" {
+    const allocator = std.testing.allocator;
+
+    const tmp_path = "/tmp/kwtsms_test_loadconfig_owner";
+    {
+        const f = try std.fs.cwd().createFile(tmp_path, .{});
+        defer f.close();
+        try f.writeAll("KWTSMS_USERNAME=cfguser\nKWTSMS_PASSWORD=cfgpass\nKWTSMS_SENDER_ID=TESTSENDER\n");
+    }
+    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+
+    const config = try loadConfig(allocator, tmp_path);
+    defer config.deinit(allocator);
+
+    // Values must be accessible (not use-after-free) after loadConfig returns
+    try std.testing.expectEqualStrings("cfguser", config.username.?);
+    try std.testing.expectEqualStrings("cfgpass", config.password.?);
+    try std.testing.expectEqualStrings("TESTSENDER", config.sender_id.?);
+    try std.testing.expect(config._owned_username);
+    try std.testing.expect(config._owned_password);
+    try std.testing.expect(config._owned_sender_id);
+}
+
+test "loadConfig: missing file returns empty config" {
+    const allocator = std.testing.allocator;
+    const config = try loadConfig(allocator, "/tmp/nonexistent_kwtsms_config_test");
+    defer config.deinit(allocator);
+    try std.testing.expect(config.username == null);
+    try std.testing.expect(config.password == null);
+    try std.testing.expect(!config.test_mode);
+}
+
+test "loadConfig: test_mode parsed correctly" {
+    const allocator = std.testing.allocator;
+
+    const tmp_path = "/tmp/kwtsms_test_loadconfig_testmode";
+    {
+        const f = try std.fs.cwd().createFile(tmp_path, .{});
+        defer f.close();
+        try f.writeAll("KWTSMS_TEST_MODE=1\n");
+    }
+    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+
+    const config = try loadConfig(allocator, tmp_path);
+    defer config.deinit(allocator);
+    try std.testing.expect(config.test_mode);
 }

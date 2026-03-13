@@ -81,11 +81,13 @@ pub fn parseResponse(
     endpoint: []const u8,
     request_body: []const u8,
 ) errors.ApiResponse {
-    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, body, .{}) catch {
+    // Validate JSON structure before manual parsing.
+    // H4 fix: call deinit() to free the parsed tree instead of discarding it.
+    var parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, body, .{}) catch {
         logger.writeLog(log_file, endpoint, request_body, body, false, "Invalid JSON response");
         return errors.networkError("Invalid JSON response from API");
     };
-    _ = parsed; // We use the raw body approach below for simplicity
+    parsed.deinit();
 
     var resp = errors.ApiResponse{
         .result = "ERROR",
@@ -176,7 +178,25 @@ fn jsonGetFloat(json: []const u8, key: []const u8) ?f64 {
     return std.fmt.parseFloat(f64, json[start..end]) catch null;
 }
 
+/// Write s as a JSON string value (no surrounding quotes). Escapes special chars.
+/// H3 fix: prevents JSON injection via user-controlled credential/message fields.
+fn writeJsonEscaped(writer: anytype, s: []const u8) !void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            '\t' => try writer.writeAll("\\t"),
+            // Other control chars not already matched above
+            0x00...0x08, 0x0B...0x0C, 0x0E...0x1F => try writer.print("\\u{X:0>4}", .{@as(u32, c)}),
+            else => try writer.writeByte(c),
+        }
+    }
+}
+
 /// Build a JSON request body for sending to the API.
+/// H3 fix: all user-supplied strings are JSON-escaped to prevent injection.
 pub fn buildSendBody(
     buf: []u8,
     username: []const u8,
@@ -186,58 +206,79 @@ pub fn buildSendBody(
     message: []const u8,
     test_mode: bool,
 ) ?[]const u8 {
-    const result = std.fmt.bufPrint(buf, "{{\"username\":\"{s}\",\"password\":\"{s}\",\"sender\":\"{s}\",\"mobile\":\"{s}\",\"message\":\"{s}\",\"test\":\"{s}\"}}", .{
-        username,
-        password,
-        sender,
-        mobile,
-        message,
-        if (test_mode) "1" else "0",
-    }) catch return null;
-    return result;
+    var fbs = std.io.fixedBufferStream(buf);
+    const w = fbs.writer();
+    w.writeAll("{\"username\":\"") catch return null;
+    writeJsonEscaped(w, username) catch return null;
+    w.writeAll("\",\"password\":\"") catch return null;
+    writeJsonEscaped(w, password) catch return null;
+    w.writeAll("\",\"sender\":\"") catch return null;
+    writeJsonEscaped(w, sender) catch return null;
+    w.writeAll("\",\"mobile\":\"") catch return null;
+    writeJsonEscaped(w, mobile) catch return null;
+    w.writeAll("\",\"message\":\"") catch return null;
+    writeJsonEscaped(w, message) catch return null;
+    w.writeAll("\",\"test\":\"") catch return null;
+    w.writeAll(if (test_mode) "1" else "0") catch return null;
+    w.writeAll("\"}") catch return null;
+    return fbs.getWritten();
 }
 
 /// Build a JSON request body for auth-only endpoints (balance, senderid, coverage).
+/// H3 fix: credentials are JSON-escaped.
 pub fn buildAuthBody(
     buf: []u8,
     username: []const u8,
     password: []const u8,
 ) ?[]const u8 {
-    const result = std.fmt.bufPrint(buf, "{{\"username\":\"{s}\",\"password\":\"{s}\"}}", .{
-        username,
-        password,
-    }) catch return null;
-    return result;
+    var fbs = std.io.fixedBufferStream(buf);
+    const w = fbs.writer();
+    w.writeAll("{\"username\":\"") catch return null;
+    writeJsonEscaped(w, username) catch return null;
+    w.writeAll("\",\"password\":\"") catch return null;
+    writeJsonEscaped(w, password) catch return null;
+    w.writeAll("\"}") catch return null;
+    return fbs.getWritten();
 }
 
 /// Build a JSON request body for validate endpoint.
+/// H3 fix: credentials are JSON-escaped.
 pub fn buildValidateBody(
     buf: []u8,
     username: []const u8,
     password: []const u8,
     mobile: []const u8,
 ) ?[]const u8 {
-    const result = std.fmt.bufPrint(buf, "{{\"username\":\"{s}\",\"password\":\"{s}\",\"mobile\":\"{s}\"}}", .{
-        username,
-        password,
-        mobile,
-    }) catch return null;
-    return result;
+    var fbs = std.io.fixedBufferStream(buf);
+    const w = fbs.writer();
+    w.writeAll("{\"username\":\"") catch return null;
+    writeJsonEscaped(w, username) catch return null;
+    w.writeAll("\",\"password\":\"") catch return null;
+    writeJsonEscaped(w, password) catch return null;
+    w.writeAll("\",\"mobile\":\"") catch return null;
+    writeJsonEscaped(w, mobile) catch return null;
+    w.writeAll("\"}") catch return null;
+    return fbs.getWritten();
 }
 
 /// Build a JSON request body for status/dlr endpoint.
+/// H3 fix: credentials are JSON-escaped.
 pub fn buildMsgIdBody(
     buf: []u8,
     username: []const u8,
     password: []const u8,
     msg_id: []const u8,
 ) ?[]const u8 {
-    const result = std.fmt.bufPrint(buf, "{{\"username\":\"{s}\",\"password\":\"{s}\",\"msgid\":\"{s}\"}}", .{
-        username,
-        password,
-        msg_id,
-    }) catch return null;
-    return result;
+    var fbs = std.io.fixedBufferStream(buf);
+    const w = fbs.writer();
+    w.writeAll("{\"username\":\"") catch return null;
+    writeJsonEscaped(w, username) catch return null;
+    w.writeAll("\",\"password\":\"") catch return null;
+    writeJsonEscaped(w, password) catch return null;
+    w.writeAll("\",\"msgid\":\"") catch return null;
+    writeJsonEscaped(w, msg_id) catch return null;
+    w.writeAll("\"}") catch return null;
+    return fbs.getWritten();
 }
 
 // -- Tests --
@@ -271,6 +312,15 @@ test "buildAuthBody: creates valid JSON" {
     try std.testing.expect(std.mem.indexOf(u8, body, "\"password\":\"pass\"") != null);
 }
 
+test "buildAuthBody: JSON-escapes quotes in credentials" {
+    var buf: [512]u8 = undefined;
+    // A credential containing a double quote must be escaped, not break JSON structure
+    const body = buildAuthBody(&buf, "user\"name", "pa\\ss").?;
+    try std.testing.expect(std.mem.indexOf(u8, body, "\\\"") != null); // escaped quote present
+    try std.testing.expect(std.mem.indexOf(u8, body, "user\"name") == null); // raw quote absent
+    try std.testing.expect(std.mem.indexOf(u8, body, "\\\\") != null); // escaped backslash present
+}
+
 test "buildSendBody: creates valid JSON" {
     var buf: [4096]u8 = undefined;
     const body = buildSendBody(&buf, "user", "pass", "KWT-SMS", "96598765432", "Hello", false).?;
@@ -282,6 +332,21 @@ test "buildSendBody: test mode sets test=1" {
     var buf: [4096]u8 = undefined;
     const body = buildSendBody(&buf, "user", "pass", "KWT-SMS", "96598765432", "Hello", true).?;
     try std.testing.expect(std.mem.indexOf(u8, body, "\"test\":\"1\"") != null);
+}
+
+test "buildSendBody: JSON-escapes message content" {
+    var buf: [4096]u8 = undefined;
+    // A message with a double quote must be escaped
+    const body = buildSendBody(&buf, "u", "p", "S", "96598765432", "Hello \"World\"", false).?;
+    try std.testing.expect(std.mem.indexOf(u8, body, "Hello \\\"World\\\"") != null);
+    // Raw unescaped quotes must not appear inside the message value
+    try std.testing.expect(std.mem.indexOf(u8, body, "Hello \"World\"") == null);
+}
+
+test "buildSendBody: returns null when buffer too small" {
+    var buf: [10]u8 = undefined;
+    const body = buildSendBody(&buf, "user", "pass", "KWT-SMS", "96598765432", "Hello", false);
+    try std.testing.expect(body == null);
 }
 
 test "parseResponse: parses OK send response" {
@@ -304,4 +369,32 @@ test "parseResponse: unknown error code has no action" {
     const resp = parseResponse(body, null, "send", "{}");
     try std.testing.expect(resp.isError());
     try std.testing.expect(resp.action == null);
+}
+
+test "writeJsonEscaped: escapes double quote" {
+    var buf: [64]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try writeJsonEscaped(fbs.writer(), "say \"hi\"");
+    try std.testing.expectEqualStrings("say \\\"hi\\\"", fbs.getWritten());
+}
+
+test "writeJsonEscaped: escapes backslash" {
+    var buf: [64]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try writeJsonEscaped(fbs.writer(), "C:\\path");
+    try std.testing.expectEqualStrings("C:\\\\path", fbs.getWritten());
+}
+
+test "writeJsonEscaped: escapes newline" {
+    var buf: [64]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try writeJsonEscaped(fbs.writer(), "line1\nline2");
+    try std.testing.expectEqualStrings("line1\\nline2", fbs.getWritten());
+}
+
+test "writeJsonEscaped: passes through safe characters" {
+    var buf: [64]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try writeJsonEscaped(fbs.writer(), "hello world 123");
+    try std.testing.expectEqualStrings("hello world 123", fbs.getWritten());
 }

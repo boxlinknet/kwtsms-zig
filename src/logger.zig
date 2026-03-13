@@ -33,19 +33,47 @@ fn writeLogInner(
     var buf: [64]u8 = undefined;
     const ts = getUtcTimestamp(&buf);
 
-    // Mask password in request body
-    var masked_buf: [4096]u8 = undefined;
+    // H2 fix: 8192-byte buffer covers the largest realistic request body
+    // (200x 15-digit numbers + 918-char message + 64-char creds = ~4316 bytes).
+    // A 4096-byte buffer could overflow and expose the password in plaintext.
+    var masked_buf: [8192]u8 = undefined;
     const masked_request = maskPassword(request_body, &masked_buf);
 
     var writer = file.writer();
-    try writer.print("{{\"ts\":\"{s}\",\"endpoint\":\"{s}\",\"request\":{s},\"response\":{s},\"ok\":{},\"error\":{s}}}\n", .{
+    try writer.print("{{\"ts\":\"{s}\",\"endpoint\":\"{s}\",\"request\":{s},\"response\":{s},\"ok\":{},\"error\":", .{
         ts,
         endpoint,
         masked_request,
         if (response_body.len > 0) response_body else "null",
         ok,
-        if (err_msg) |e| e else "null",
     });
+
+    // M1 fix: properly JSON-quote the error string so the output is valid JSONL.
+    // Previously written as bare text, breaking any downstream JSONL parser.
+    if (err_msg) |e| {
+        try writer.writeByte('"');
+        try writeJsonEscaped(writer, e);
+        try writer.writeByte('"');
+    } else {
+        try writer.writeAll("null");
+    }
+
+    try writer.writeAll("}\n");
+}
+
+/// Write s as a JSON string value (no surrounding quotes). Escapes special chars.
+fn writeJsonEscaped(writer: anytype, s: []const u8) !void {
+    for (s) |c| {
+        switch (c) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            '\t' => try writer.writeAll("\\t"),
+            0x00...0x08, 0x0B...0x0C, 0x0E...0x1F => try writer.print("\\u{X:0>4}", .{@as(u32, c)}),
+            else => try writer.writeByte(c),
+        }
+    }
 }
 
 fn getUtcTimestamp(buf: []u8) []const u8 {
@@ -91,7 +119,7 @@ fn maskPassword(input: []const u8, buf: []u8) []const u8 {
 
 // -- Tests --
 test "maskPassword: masks password in JSON" {
-    var buf: [4096]u8 = undefined;
+    var buf: [8192]u8 = undefined;
     const input = "{\"username\":\"user\",\"password\":\"secret123\"}";
     const result = maskPassword(input, &buf);
     try std.testing.expect(std.mem.indexOf(u8, result, "secret123") == null);
@@ -99,10 +127,33 @@ test "maskPassword: masks password in JSON" {
 }
 
 test "maskPassword: no password field returns original" {
-    var buf: [4096]u8 = undefined;
+    var buf: [8192]u8 = undefined;
     const input = "{\"username\":\"user\"}";
     const result = maskPassword(input, &buf);
     try std.testing.expectEqualStrings(input, result);
+}
+
+test "maskPassword: large body is masked not passed through" {
+    // H2 fix verification: a body near the old 4096-byte limit must still be masked.
+    // Construct a body that would overflow the old 4096-byte buffer but fits in 8192.
+    var body_buf: [5000]u8 = undefined;
+    // Fill with a long mobile list prefix, then add credentials
+    const prefix = "{\"username\":\"user\",\"password\":\"supersecretpassword\",\"mobile\":\"";
+    @memcpy(body_buf[0..prefix.len], prefix);
+    // Pad with digits to push past 4096 bytes
+    var i: usize = prefix.len;
+    while (i < 4200) : (i += 1) {
+        body_buf[i] = '9';
+    }
+    body_buf[i] = '"';
+    body_buf[i + 1] = '}';
+    const input = body_buf[0 .. i + 2];
+
+    var mask_buf: [8192]u8 = undefined;
+    const result = maskPassword(input, &mask_buf);
+    // Must be masked (not the original)
+    try std.testing.expect(std.mem.indexOf(u8, result, "supersecretpassword") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "***") != null);
 }
 
 test "getUtcTimestamp: returns valid format" {
@@ -119,4 +170,48 @@ test "writeLog: does not crash with null path" {
 
 test "writeLog: does not crash with empty path" {
     writeLog("", "send", "{}", "{}", true, null);
+}
+
+test "writeLog: error field is valid JSON (quoted string)" {
+    // M1 fix verification: error messages must be JSON-quoted, not bare text.
+    const tmp_path = "/tmp/kwtsms_test_logger_jsonl";
+    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+
+    writeLog(tmp_path, "send", "{}", "{}", false, "Authentication error, check credentials");
+
+    // Read the log and verify it contains a properly quoted error field
+    const allocator = std.testing.allocator;
+    const content = try std.fs.cwd().readFileAlloc(allocator, tmp_path, 4096);
+    defer allocator.free(content);
+
+    try std.testing.expect(std.mem.indexOf(u8, content, "\"error\":\"Authentication error") != null);
+    // Must NOT be bare text (old bug: "error":Authentication error...)
+    try std.testing.expect(std.mem.indexOf(u8, content, "\"error\":Authentication") == null);
+}
+
+test "writeLog: error field with special chars is properly escaped" {
+    // M1 fix: error messages containing quotes must be escaped
+    const tmp_path = "/tmp/kwtsms_test_logger_escape";
+    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+
+    writeLog(tmp_path, "send", "{}", "{}", false, "Error: \"invalid\" response");
+
+    const allocator = std.testing.allocator;
+    const content = try std.fs.cwd().readFileAlloc(allocator, tmp_path, 4096);
+    defer allocator.free(content);
+
+    try std.testing.expect(std.mem.indexOf(u8, content, "\\\"invalid\\\"") != null);
+}
+
+test "writeLog: null error field writes null" {
+    const tmp_path = "/tmp/kwtsms_test_logger_null_err";
+    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+
+    writeLog(tmp_path, "balance", "{}", "{}", true, null);
+
+    const allocator = std.testing.allocator;
+    const content = try std.fs.cwd().readFileAlloc(allocator, tmp_path, 4096);
+    defer allocator.free(content);
+
+    try std.testing.expect(std.mem.indexOf(u8, content, "\"error\":null") != null);
 }
