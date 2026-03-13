@@ -77,34 +77,11 @@ pub fn main() !void {
 
 ## CLI
 
-Build the CLI binary:
-
-```bash
-zig build
-./zig-out/bin/kwtsms help
-```
-
-Commands:
-
-```
-kwtsms setup                                           # interactive setup wizard
-kwtsms verify                                          # test credentials
-kwtsms balance                                         # show credits
-kwtsms senderid                                        # list sender IDs
-kwtsms coverage                                        # list active prefixes
-kwtsms send <mobile> <message> [--sender ID]           # send SMS
-kwtsms validate <number> [number ...]                  # validate numbers
-kwtsms status <msg-id>                                 # check status
-kwtsms dlr <msg-id>                                    # delivery report
-```
-
-Test mode prints a visible warning before sending. Errors print `action` guidance.
+Looking for a CLI tool? Use [kwtsms-cli](https://github.com/boxlinknet/kwtsms-cli), the dedicated command-line client for kwtSMS.
 
 ## Setup / Configuration
 
-Run `kwtsms setup` for an interactive wizard that verifies credentials, lets you select a sender ID, and writes a `.env` file.
-
-Or create a `.env` file manually / set these environment variables:
+Create a `.env` file or set these environment variables:
 
 ```ini
 KWTSMS_USERNAME=zig_username

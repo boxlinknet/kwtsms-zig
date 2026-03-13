@@ -20,16 +20,6 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
-    // CLI binary
-    const cli = b.addExecutable(.{
-        .name = "kwtsms",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    cli.root_module.addImport("kwtsms", kwtsms_mod);
-    b.installArtifact(cli);
-
     // Unit tests (library)
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/kwtsms.zig"),
@@ -38,18 +28,8 @@ pub fn build(b: *std.Build) void {
     });
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
-    // Unit tests (CLI)
-    const cli_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    cli_unit_tests.root_module.addImport("kwtsms", kwtsms_mod);
-    const run_cli_unit_tests = b.addRunArtifact(cli_unit_tests);
-
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
-    test_step.dependOn(&run_cli_unit_tests.step);
 
     // Integration tests (separate step, requires credentials)
     const integration_tests = b.addTest(.{
