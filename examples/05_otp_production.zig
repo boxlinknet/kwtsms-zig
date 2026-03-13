@@ -19,7 +19,6 @@ const kwtsms = @import("kwtsms");
 /// [ ] Test mode OFF (KWTSMS_TEST_MODE=0)
 /// [ ] Private Sender ID registered (not KWT-SMS)
 /// [ ] Transactional Sender ID for OTP (not promotional)
-
 const OtpConfig = struct {
     app_name: []const u8 = "MyApp",
     otp_length: u8 = 6,
